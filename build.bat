@@ -1,0 +1,1 @@
+echo "build step:%time%:%date%"
