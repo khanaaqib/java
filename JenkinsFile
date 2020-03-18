@@ -1,165 +1,30 @@
-#!groovy
-@Library('shared-libraries')
-
-String version = env.BUILD_NUMBER
-String application = "cms-aem"
-String slackChannel = "#TBD"
-String checkmarxReportRecipients = "naru.raghavan@mbusa.com,patrick.ma@mbusa.com,robert.omara@mbusa.com,ogradye@mbusa.com,infosys.chengat@mbusa.com"
-String emailBody = "Please take a look at the Checkmarx report at: ${env.BUILD_URL}/checkmarx/pdfReport"
-String emailSubject = "Checkmarx Scan Completed - ${env.JOB_NAME} ${env.BUILD_NUMBER} - Please take a look at the Report"
-
-println "Pipeline Version='${version}'"
-
-def buildInfo = Artifactory.newBuildInfo()
-buildInfo.env.capture = true
-def server = Artifactory.server 'artifactory-server'
-def uploadSpec = """{
-            "files": [
-                {
-                "pattern": "target/",
-                "target": "libs-releases-local/"
-                },
-                {
-                "pattern": "Infra/*.yml",
-                "target": "libs-releases-local/"
-                }
-            ]
-        }"""
-
-println "JOB_NAME=${env.JOB_NAME}"
-def pom
-
-def sites = ["core", "dog", "sds"]
-
-// try to get parameter choices from pipeline
-//def List<ChoiceParameterDefinition> paramDef = Jenkins.getInstance().getAllItems(ChoiceParameterDefinition.class)
-//println paramDef.choices
-
 pipeline {
-    agent { label 'linux' }
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '30'))
-        timeout(time: 3, unit: 'DAYS')
-    }
-
-    environment {
-        AUTH_ENV = ''
-    }
-
+    agent any
     stages {
-        stage('Checkmarx Scan') {
-            when { expression { return env.JOB_NAME == 'mbusa/cms/cms-aem-security-analysis' } }
+        stage('check out the code') {
             steps {
-                slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Checkmarx Scan Started - ${env.JOB_NAME} [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Console>)", color: 'good', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-                withCredentials([
-                        [$class: 'UsernamePasswordMultiBinding', credentialsId: 'CMS-EMT-Checkmarx', usernameVariable: 'CM_USER', passwordVariable: 'CM_PWD'],
-                ]) {
-                    step([$class: 'CxScanBuilder', comment: '', excludeFolders: '.git,dog-vehicle-data.ui.content,dog.ui.content,sds.ui.content,template.ui.apps,template.ui.content,core.ui.content', excludeOpenSourceFolders: '', filterPattern: '', fullScanCycle: 10, generatePdfReport: true, groupId: '1f8b8e7e-b2b6-4f26-92c2-44258f8b5742', highThreshold: 0, mediumThreshold: 5,lowThreshold: 50, includeOpenSourceFolders: '', password: CM_PWD, preset: '42', projectName: 'cms-aem-APP-21896', serverUrl: 'https://cx.mbusa.com', sourceEncoding: '1', username: CM_USER, vulnerabilityThresholdResult: 'FAILURE', waitForResultsEnabled: true])
-                }
-            }
-            post {
-                always {
-                    echo "emailing scan results url to ${checkmarxReportRecipients}"
-                    mail(from: 'devops@nafta-ow.com', subject: emailSubject, to: checkmarxReportRecipients, body: emailBody)
-                }
+                echo 'check out the code in my git repo.'
+                
             }
         }
-
-        stage('DEV') {
-            when { expression { return env.JOB_NAME == 'mbusa/cms/cms-dev' } }
+        stage('Build') {
             steps {
-                slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Build Started - ${env.JOB_NAME} [site:${site}] [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Console>)", color: 'good', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-
-                script {
-                  AUTH_ENV = "https://author-cms-dev.aws.mbusa.com"
-
-                  if("${site}" == 'all') {
-                    for (String site : sites) {
-                        cmsAEMBuild(true, "normal", site)
-                        cmsAEMDeploy "aem-deployer", "author1-cms-dev.aws.mbusa.com", "4502", "http", "", false, site
-                        cmsAEMDeploy "aem-deployer", ["publish1-cms-dev.aws.mbusa.com", "publish2-cms-dev.aws.mbusa.com"], "4503", "http", "", false, site
-                    }
-                  } else {
-                    cmsAEMBuild(true, "normal", "${site}")
-                    cmsAEMDeploy "aem-deployer", "author1-cms-dev.aws.mbusa.com", "4502", "http", "", false, "${site}"
-                    cmsAEMDeploy "aem-deployer", ["publish1-cms-dev.aws.mbusa.com", "publish2-cms-dev.aws.mbusa.com"], "4503", "http", "", false, "${site}"
-                  }
-                }
+                echo 'Building.'
+                
+                
             }
-
         }
-
-        stage('QA') {
-            when { expression { return env.JOB_NAME == 'mbusa/cms/cms-qa' } }
+        stage('Test') {
             steps {
-                slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Build Started - ${env.JOB_NAME} [site:${site}] [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Console>)", color: 'good', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-                script {
-                  AUTH_ENV = "https://author-cms-qa.aws.mbusa.com"
-
-                  if("${site}" == 'all') {
-                    for (String site : sites) {
-                      cmsAEMBuild(true, "normal", site)
-                      cmsAEMDeploy "aem-deployer", "author1-cms-qa.aws.mbusa.com", "4502", "http", "", false, site
-                      cmsAEMDeploy "aem-deployer", ["publish1-cms-qa.aws.mbusa.com", "publish2-cms-qa.aws.mbusa.com"], "4503", "http", "", false, site
-                    }
-                  } else {
-                    cmsAEMBuild(true, "normal", "${site}")
-                    cmsAEMDeploy "aem-deployer", "author1-cms-qa.aws.mbusa.com", "4502", "http", "", false, "${site}"
-                    cmsAEMDeploy "aem-deployer", ["publish1-cms-qa.aws.mbusa.com", "publish2-cms-qa.aws.mbusa.com"], "4503", "http", "", false, "${site}"
-                  }
-                }
+                echo 'Testing.'
+                
             }
-
         }
-
-        stage("PROD") {
-            when {
-                expression {
-                    return env.JOB_NAME == 'mbusa/cms/cms-prod'
-                }
-            }
-
+        stage('Deploy') {
             steps {
-                slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Build Started - ${env.JOB_NAME} [site:${site}] [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Console>)", color: 'good', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-                script {
-                  AUTH_ENV = "https://author-cms-prod.aws.mbusa.com"
-
-                  if("${site}" == 'all') {
-                    for (String site : sites) {
-                      cmsAEMBuild(true, "optimize", site)
-                      cmsAEMDeploy "aem-deployer", "author1-cms-prod.aws.mbusa.com", "4502", "http", "", false, site
-                      cmsAEMDeploy "aem-deployer", ["publish1-cms-prod.aws.mbusa.com", "publish2-cms-prod.aws.mbusa.com", "publish3-cms-prod.aws.mbusa.com", "publish4-cms-prod.aws.mbusa.com"], "4503", "http", "", false, site
-                    }
-                  } else {
-                    cmsAEMBuild(true, "optimize", "${site}")
-                    cmsAEMDeploy "aem-deployer", "author1-cms-prod.aws.mbusa.com", "4502", "http", "", false, "${site}"
-                    cmsAEMDeploy "aem-deployer", ["publish1-cms-prod.aws.mbusa.com", "publish2-cms-prod.aws.mbusa.com", "publish3-cms-prod.aws.mbusa.com", "publish4-cms-prod.aws.mbusa.com"], "4503", "http", "", false, "${site}"
-                  }
-                }
-            }
-        }
-    }
-
-    post {
-        success {
-            println "build success"
-            script {
-                if("${site}" == 'checkmarx') {
-                    slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Build Completed - ${env.JOB_NAME} [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Console>)", color: 'good', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-                } else {
-                    slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Build Completed - ${env.JOB_NAME} [site:${site}] [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Console>) (<${AUTH_ENV}|Author>)", color: 'good', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-                }
-            }
-        }
-
-        failure {
-            println "build failed"
-            script {
-              if("${site}" == 'checkmarx') {
-                slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Build Failed - ${env.JOB_NAME} [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)", color: 'danger', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-              } else {
-                slackSend (baseUrl: "https://mbusait.slack.com/services/hooks/jenkins-ci/", message: "Build Failed - ${env.JOB_NAME} [site:${site}] [${GIT_BRANCH}] ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>) (<${AUTH_ENV}|Author>)", color: 'danger', channel: '#cms-builds', teamDomain: 'mbusait', tokenCredentialId: 'mbit-slack-token')
-              }
+                echo 'Deploying.'
+                
+                
             }
         }
     }
